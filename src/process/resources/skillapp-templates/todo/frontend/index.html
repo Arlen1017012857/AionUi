@@ -1,0 +1,462 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>TODO</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #f7f8fa;
+        --panel: #ffffff;
+        --text: #1d2129;
+        --muted: #86909c;
+        --border: #e5e6eb;
+        --primary: #165dff;
+        --danger: #f53f3f;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #17171a;
+          --panel: #232324;
+          --text: #f2f3f5;
+          --muted: #a9aeb8;
+          --border: #3c3c40;
+        }
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        font-family:
+          Inter,
+          -apple-system,
+          BlinkMacSystemFont,
+          'Segoe UI',
+          sans-serif;
+        background: var(--bg);
+        color: var(--text);
+      }
+      main {
+        width: min(960px, calc(100vw - 32px));
+        margin: 0 auto;
+        padding: 28px 0;
+      }
+      header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        margin-bottom: 18px;
+      }
+      h1 {
+        margin: 0;
+        font-size: 28px;
+      }
+      .muted {
+        color: var(--muted);
+        font-size: 13px;
+      }
+      .panel {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 18px;
+        box-shadow: 0 12px 40px rgb(0 0 0 / 0.08);
+        overflow: hidden;
+      }
+      form,
+      .toolbar {
+        display: grid;
+        grid-template-columns: 1fr 150px auto;
+        gap: 10px;
+        padding: 16px;
+        border-bottom: 1px solid var(--border);
+      }
+      input,
+      textarea,
+      select,
+      button {
+        font: inherit;
+        border-radius: 10px;
+      }
+      input,
+      textarea,
+      select {
+        width: 100%;
+        border: 1px solid var(--border);
+        background: transparent;
+        color: var(--text);
+        padding: 10px 12px;
+      }
+      textarea {
+        grid-column: 1 / -1;
+        resize: vertical;
+        min-height: 68px;
+      }
+      button {
+        border: 0;
+        background: var(--primary);
+        color: white;
+        padding: 10px 14px;
+        cursor: pointer;
+      }
+      button.secondary {
+        background: transparent;
+        border: 1px solid var(--border);
+        color: var(--text);
+      }
+      button.danger {
+        background: transparent;
+        border: 1px solid var(--danger);
+        color: var(--danger);
+      }
+      ul {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+      }
+      li {
+        display: grid;
+        grid-template-columns: auto 1fr auto;
+        gap: 12px;
+        align-items: start;
+        padding: 14px 16px;
+        border-bottom: 1px solid var(--border);
+      }
+      li:last-child {
+        border-bottom: 0;
+      }
+      .title {
+        font-weight: 650;
+      }
+      .done .title {
+        text-decoration: line-through;
+        color: var(--muted);
+      }
+      .actions {
+        display: flex;
+        gap: 8px;
+      }
+      .empty,
+      .error {
+        padding: 28px 16px;
+        text-align: center;
+        color: var(--muted);
+      }
+      .error {
+        color: var(--danger);
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <div>
+          <h1>TODO</h1>
+          <div class="muted" id="subtitle">Workspace task list</div>
+        </div>
+        <button class="secondary" id="replanButton" type="button">Ask Agent To Replan</button>
+      </header>
+      <section class="panel">
+        <form id="todoForm">
+          <input id="titleInput" autocomplete="off" placeholder="New task title" required />
+          <select id="statusInput">
+            <option value="todo">To Do</option>
+            <option value="in_progress">In Progress</option>
+            <option value="done">Done</option>
+          </select>
+          <button type="submit">Add</button>
+          <textarea id="notesInput" placeholder="Notes, constraints, or due date"></textarea>
+        </form>
+        <div class="toolbar">
+          <input id="searchInput" placeholder="Filter tasks" />
+          <select id="filterInput">
+            <option value="all">All</option>
+            <option value="todo">To Do</option>
+            <option value="in_progress">In Progress</option>
+            <option value="done">Done</option>
+          </select>
+          <button class="secondary" id="refreshButton" type="button">Refresh</button>
+        </div>
+        <ul id="todoList"></ul>
+        <div class="empty" id="emptyState" hidden>No TODO items yet.</div>
+        <div class="error" id="errorState" hidden></div>
+      </section>
+    </main>
+    <script>
+      const searchParams = new URLSearchParams(location.search);
+      const hashParams = new URLSearchParams(location.hash.replace(/^#\??/, ''));
+
+      function getParam(name) {
+        return searchParams.get(name) || hashParams.get(name) || '';
+      }
+
+      const appId = getParam('appId') || 'todo';
+      const token = getParam('token');
+      const pbBase = getParam('pbBase') || location.origin;
+      const apiBase = getParam('apiBase') || pbBase;
+      const eventBase = getParam('eventBase');
+      const conversationId = getParam('conversationId');
+      const todosCollection = getParam('todosCollection') || 'app_todo_todos';
+      const listEl = document.getElementById('todoList');
+      const emptyEl = document.getElementById('emptyState');
+      const errorEl = document.getElementById('errorState');
+      const searchInput = document.getElementById('searchInput');
+      const filterInput = document.getElementById('filterInput');
+      const subtitle = document.getElementById('subtitle');
+      let records = [];
+      let refreshTimer = null;
+      let loadPromise = null;
+      let pendingReload = false;
+      let eventSource = null;
+      let reconnectTimer = null;
+
+      subtitle.textContent = `Collection: ${todosCollection}`;
+
+      function endpoint(path) {
+        const normalizedPath = path.startsWith('/') ? path.slice(1) : path;
+        return new URL(normalizedPath, apiBase.endsWith('/') ? apiBase : `${apiBase}/`).toString();
+      }
+
+      async function request(path, options = {}) {
+        const headers = new Headers(options.headers || undefined);
+        if (options.body !== undefined && options.body !== null && !headers.has('Content-Type')) {
+          headers.set('Content-Type', 'application/json');
+        }
+        if (token && apiBase.includes('/api/skillapps/')) {
+          headers.set('X-SkillApp-Token', token);
+        }
+        const response = await fetch(endpoint(path), {
+          ...options,
+          headers,
+        });
+        if (!response.ok) {
+          throw new Error(`${response.status} ${response.statusText}`);
+        }
+        if (response.status === 204) return null;
+        return response.json();
+      }
+
+      async function emitEvent(type, policy, payload, summary) {
+        if (!eventBase || !token) return;
+        try {
+          await fetch(eventBase, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-SkillApp-Token': token,
+            },
+            body: JSON.stringify({ appId, conversationId, type, policy, payload, summary }),
+          });
+        } catch {
+          // The TODO state is still persisted in PocketBase even if agent notification is offline.
+        }
+      }
+
+      async function loadTodos() {
+        if (loadPromise) {
+          pendingReload = true;
+          return loadPromise;
+        }
+        errorEl.hidden = true;
+        loadPromise = request(`/api/collections/${todosCollection}/records?perPage=100`)
+          .then((result) => {
+            records = Array.isArray(result.items) ? result.items : [];
+            render();
+          })
+          .finally(() => {
+            loadPromise = null;
+            if (pendingReload) {
+              pendingReload = false;
+              queueRefresh();
+            }
+          });
+        return loadPromise;
+      }
+
+      function queueRefresh() {
+        if (refreshTimer) return;
+        refreshTimer = window.setTimeout(() => {
+          refreshTimer = null;
+          loadTodos().catch(showError);
+        }, 160);
+      }
+
+      function connectEventStream() {
+        if (!eventBase || !token || typeof EventSource === 'undefined') return;
+        if (eventSource) return;
+        const streamUrl = new URL(eventBase);
+        streamUrl.searchParams.set('token', token);
+        if (conversationId) {
+          streamUrl.searchParams.set('conversationId', conversationId);
+        }
+
+        const stream = new EventSource(streamUrl.toString());
+        eventSource = stream;
+        stream.addEventListener('skillapp', (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            if (data?.appId !== appId) return;
+            if (data?.payload?.origin === 'ui') return;
+            queueRefresh();
+          } catch {
+            // Ignore malformed events and wait for the next refresh signal.
+          }
+        });
+        stream.onerror = () => {
+          stream.close();
+          if (eventSource === stream) {
+            eventSource = null;
+          }
+          if (!reconnectTimer) {
+            reconnectTimer = window.setTimeout(() => {
+              reconnectTimer = null;
+              connectEventStream();
+            }, 1500);
+          }
+        };
+      }
+
+      function render() {
+        const query = searchInput.value.trim().toLowerCase();
+        const filter = filterInput.value;
+        const visibleRecords = records.filter((record) => {
+          const statusMatch = filter === 'all' || record.status === filter;
+          const text = `${record.title || ''} ${record.notes || ''}`.toLowerCase();
+          return statusMatch && (!query || text.includes(query));
+        });
+        listEl.innerHTML = '';
+        emptyEl.hidden = visibleRecords.length > 0;
+        for (const record of visibleRecords) {
+          const item = document.createElement('li');
+          if (record.status === 'done') item.className = 'done';
+
+          const checkbox = document.createElement('input');
+          checkbox.type = 'checkbox';
+          checkbox.checked = record.status === 'done';
+          checkbox.addEventListener('change', () =>
+            updateTodo(record.id, { status: checkbox.checked ? 'done' : 'todo' })
+          );
+
+          const body = document.createElement('div');
+          const title = document.createElement('div');
+          title.className = 'title';
+          title.textContent = record.title || '(Untitled)';
+          const meta = document.createElement('div');
+          meta.className = 'muted';
+          meta.textContent = [record.status || 'todo', record.notes || ''].filter(Boolean).join(' - ');
+          body.append(title, meta);
+
+          const actions = document.createElement('div');
+          actions.className = 'actions';
+          const progress = document.createElement('button');
+          progress.className = 'secondary';
+          progress.type = 'button';
+          progress.textContent = 'Progress';
+          progress.addEventListener('click', () => updateTodo(record.id, { status: 'in_progress' }));
+          const remove = document.createElement('button');
+          remove.className = 'danger';
+          remove.type = 'button';
+          remove.textContent = 'Delete';
+          remove.addEventListener('click', () => deleteTodo(record.id));
+          actions.append(progress, remove);
+          item.append(checkbox, body, actions);
+          listEl.append(item);
+        }
+      }
+
+      async function createTodo(event) {
+        event.preventDefault();
+        const titleInput = document.getElementById('titleInput');
+        const notesInput = document.getElementById('notesInput');
+        const statusInput = document.getElementById('statusInput');
+        const payload = {
+          title: titleInput.value.trim(),
+          status: statusInput.value,
+          notes: notesInput.value.trim(),
+        };
+        if (!payload.title) return;
+        const record = await request(`/api/collections/${todosCollection}/records`, {
+          method: 'POST',
+          body: JSON.stringify(payload),
+        });
+        records = [record, ...records];
+        titleInput.value = '';
+        notesInput.value = '';
+        statusInput.value = 'todo';
+        render();
+        await emitEvent(
+          'STATE_DELTA',
+          'state-only',
+          { action: 'todo.created', origin: 'ui', record },
+          `TODO created: ${record.title}`
+        );
+      }
+
+      async function updateTodo(id, patch) {
+        const record = await request(`/api/collections/${todosCollection}/records/${id}`, {
+          method: 'PATCH',
+          body: JSON.stringify(patch),
+        });
+        records = records.map((item) => (item.id === id ? record : item));
+        render();
+        await emitEvent(
+          'STATE_DELTA',
+          'state-only',
+          { action: 'todo.updated', origin: 'ui', record },
+          `TODO updated: ${record.title}`
+        );
+      }
+
+      async function deleteTodo(id) {
+        const record = records.find((item) => item.id === id);
+        await request(`/api/collections/${todosCollection}/records/${id}`, { method: 'DELETE' });
+        records = records.filter((item) => item.id !== id);
+        render();
+        await emitEvent(
+          'STATE_DELTA',
+          'state-only',
+          { action: 'todo.deleted', origin: 'ui', record },
+          `TODO deleted: ${record?.title || id}`
+        );
+      }
+
+      async function requestReplan() {
+        await emitEvent(
+          'CUSTOM',
+          'immediate',
+          { action: 'plan.reschedule_requested', origin: 'ui', todos: records },
+          `User requested TODO replanning for ${records.length} items`
+        );
+      }
+
+      document.getElementById('todoForm').addEventListener('submit', (event) => {
+        createTodo(event).catch(showError);
+      });
+      document.getElementById('refreshButton').addEventListener('click', () => loadTodos().catch(showError));
+      document.getElementById('replanButton').addEventListener('click', () => requestReplan().catch(showError));
+      searchInput.addEventListener('input', render);
+      filterInput.addEventListener('change', render);
+      window.addEventListener('beforeunload', () => {
+        if (reconnectTimer) {
+          window.clearTimeout(reconnectTimer);
+          reconnectTimer = null;
+        }
+        if (eventSource) {
+          eventSource.close();
+          eventSource = null;
+        }
+      });
+
+      function showError(error) {
+        errorEl.textContent = error instanceof Error ? error.message : String(error);
+        errorEl.hidden = false;
+      }
+
+      connectEventStream();
+      loadTodos().catch(showError);
+    </script>
+  </body>
+</html>

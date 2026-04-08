@@ -643,8 +643,32 @@ export const preview = {
     metadata?: {
       title?: string;
       fileName?: string;
+      skillAppId?: string;
+      conversationId?: string;
+      workspace?: string;
     };
   }>('preview.open'),
+};
+
+export const skillApp = {
+  list: bridge.buildProvider<
+    import('../types/skillapp').SkillAppInfo[],
+    import('../types/skillapp').SkillAppListRequest
+  >('skill-app.list'),
+  resolveBundle: bridge.buildProvider<
+    import('../types/skillapp').SkillAppResolveBundleResult,
+    import('../types/skillapp').SkillAppResolveBundleRequest
+  >('skill-app.resolve-bundle'),
+  open: bridge.buildProvider<
+    import('../types/skillapp').SkillAppOpenResult,
+    import('../types/skillapp').SkillAppOpenRequest
+  >('skill-app.open'),
+  stop: bridge.buildProvider<void, import('../types/skillapp').SkillAppStopRequest>('skill-app.stop'),
+  setVisibility: bridge.buildProvider<void, import('../types/skillapp').SkillAppVisibilityRequest>(
+    'skill-app.set-visibility'
+  ),
+  emitEvent: bridge.buildProvider<void, import('../types/skillapp').SkillAppEventInput>('skill-app.emit-event'),
+  status: bridge.buildEmitter<import('../types/skillapp').SkillAppRuntimeStatus>('skill-app.status'),
 };
 
 export const document = {

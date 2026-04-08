@@ -23,6 +23,7 @@ import { getDatabase } from '@process/services/database';
 import { addMessage, addOrUpdateMessage, nextTickToLocalFinish } from '@process/utils/message';
 import { cronBusyGuard } from '@process/services/cron/CronBusyGuard';
 import { skillSuggestWatcher } from '@process/services/cron/SkillSuggestWatcher';
+import { skillAppRuntime } from '@process/services/skillapp';
 import { handlePreviewOpenEvent } from '@process/utils/previewUtils';
 import BaseAgentManager from './BaseAgentManager';
 import { IpcAgentEventEmitter } from './IpcAgentEventEmitter';
@@ -373,7 +374,14 @@ export class GeminiAgentManager extends BaseAgentManager<
     cronMeta?: CronMessageMeta;
     hidden?: boolean;
     silent?: boolean;
+    skillAppContext?: string;
   }) {
+    const dataForAgent = data.skillAppContext
+      ? {
+          ...data,
+          input: `[SkillApp State]\n${data.skillAppContext}\n\n[User Request]\n${data.input}`,
+        }
+      : data;
     if (data.silent) {
       await this.refreshWorkerIfMcpChanged();
       this.status = 'pending';
@@ -392,7 +400,7 @@ export class GeminiAgentManager extends BaseAgentManager<
             });
           });
         })
-        .then(() => super.sendMessage(data))
+        .then(() => super.sendMessage(dataForAgent))
         .finally(() => {
           cronBusyGuard.setProcessing(this.conversation_id, false);
         });
@@ -454,7 +462,7 @@ export class GeminiAgentManager extends BaseAgentManager<
           });
         });
       })
-      .then(() => super.sendMessage(data))
+      .then(() => super.sendMessage(dataForAgent))
       .finally(() => {
         cronBusyGuard.setProcessing(this.conversation_id, false);
       });
@@ -855,6 +863,15 @@ export class GeminiAgentManager extends BaseAgentManager<
           const skillManager = AcpSkillManager.getInstance(this.enabledSkills);
           await skillManager.discoverSkills(this.enabledSkills);
           const skills = await skillManager.getSkills(skillRequests);
+          await Promise.all(
+            skillRequests.map((skillName) =>
+              skillAppRuntime.handleSkillLoaded({
+                skillName,
+                conversationId: this.conversation_id,
+                workspace: this.workspace,
+              })
+            )
+          );
           if (skills.length > 0) {
             const skillContent = buildSkillContentText(skills);
             collectedResponses.push(skillContent);

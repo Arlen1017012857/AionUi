@@ -32,6 +32,7 @@ import {
 import { getDatabase } from '../services/database/export';
 import type { AcpBackendConfig } from '@/common/types/acpTypes';
 import { migrateFromElectronConfig, importConfigFromFile } from './configMigration';
+import { loadResolvedSkillAppsFromRoot } from '@process/services/skillapp/source';
 import {
   BUILTIN_IMAGE_GEN_ID,
   BUILTIN_IMAGE_GEN_LEGACY_NAMES,
@@ -358,11 +359,176 @@ const getAutoSkillsDir = () => {
 };
 
 /**
+ * Get the writable managed SkillApp bundle root.
+ * Managed bundles are the canonical source of truth for app-specific code.
+ */
+const getManagedSkillAppsRoot = () => {
+  return path.join(cacheDir, 'skillapps', 'apps');
+};
+
+/**
  * Get the directory for per-cron-job SKILL.md files.
  * Each cron job gets its own subdirectory: {cronSkillsDir}/{jobId}/SKILL.md
  */
 const getCronSkillsDir = () => {
   return path.join(cacheDir, STORAGE_PATH.cronSkills);
+};
+
+/**
+ * Resolve a bundled resource directory from source paths in development and from
+ * copied runtime paths in packaged / standalone server builds.
+ */
+const resolveBuiltinResourceDir = (dirPath: string, fallbackDirs: string[] = []): string => {
+  const platform = getPlatformServices().paths;
+  const appPath = platform.getAppPath()!;
+  const resourcePrefix = 'src/process/resources/';
+  const candidates: string[] = [];
+
+  if (platform.isPackaged()) {
+    const packagedPath = dirPath.startsWith(resourcePrefix) ? dirPath.slice(resourcePrefix.length) : dirPath;
+    candidates.push(path.join(appPath, packagedPath));
+  } else {
+    candidates.push(path.join(appPath, dirPath));
+  }
+
+  candidates.push(...fallbackDirs);
+  const uniqueCandidates = [...new Set(candidates)];
+  const existing = uniqueCandidates.find((candidate) => existsSync(candidate));
+  if (existing) {
+    return existing;
+  }
+
+  console.warn(`[AionUi] Could not find builtin ${dirPath} directory, tried:`, uniqueCandidates);
+  return uniqueCandidates[0];
+};
+
+/**
+ * Return candidate roots for bundled starter SkillApp templates.
+ */
+const getSkillAppTemplateRoots = (): string[] => {
+  const fallbacks = [
+    path.join(__dirname, 'skillapp-templates'),
+    path.join(__dirname, '..', 'skillapp-templates'),
+    path.join(process.cwd(), 'dist-server', 'skillapp-templates'),
+  ];
+  const primary = resolveBuiltinResourceDir('src/process/resources/skillapp-templates', fallbacks);
+  const roots = [primary, ...fallbacks];
+  const uniqueRoots = [...new Set(roots)];
+  const existing = uniqueRoots.filter((candidate) => existsSync(candidate));
+  return existing.length > 0 ? existing : [primary];
+};
+
+type SkillAppProjectionSyncOptions = {
+  templateRoots?: string[];
+  managedRoot?: string;
+  autoSkillsDir?: string;
+  preservedBuiltinSkillNames?: Iterable<string>;
+};
+
+async function resetNativeSkillProjectionCaches(): Promise<void> {
+  clearSkillsCache();
+  try {
+    const { AcpSkillManager } = await import('@process/task/AcpSkillManager');
+    AcpSkillManager.resetInstance();
+  } catch (error) {
+    console.warn('[AionUi] Failed to reset native skill caches after SkillApp projection sync:', error);
+  }
+}
+
+async function replaceSkillProjection(
+  targetSkillDir: string,
+  sourceSkillDir: string,
+  mode: 'copy' | 'symlink'
+): Promise<boolean> {
+  if (mode === 'symlink') {
+    try {
+      const stats = await fs.lstat(targetSkillDir);
+      if (stats.isSymbolicLink()) {
+        const [currentRealPath, desiredRealPath] = await Promise.all([
+          fs.realpath(targetSkillDir),
+          fs.realpath(sourceSkillDir),
+        ]);
+        if (currentRealPath === desiredRealPath) {
+          return false;
+        }
+      }
+    } catch {
+      // Missing target is handled below.
+    }
+  }
+
+  await fs.rm(targetSkillDir, { recursive: true, force: true });
+  if (mode === 'symlink') {
+    await fs.mkdir(path.dirname(targetSkillDir), { recursive: true });
+    await fs.symlink(sourceSkillDir, targetSkillDir, 'junction');
+    return true;
+  }
+
+  await copyDirectoryRecursively(sourceSkillDir, targetSkillDir, { overwrite: true });
+  return true;
+}
+
+async function syncSkillAppSkillProjections(options: SkillAppProjectionSyncOptions = {}): Promise<void> {
+  const autoSkillsDir = options.autoSkillsDir ?? getAutoSkillsDir();
+  const managedRoot = options.managedRoot ?? getManagedSkillAppsRoot();
+  const templateRoots = options.templateRoots ?? getSkillAppTemplateRoots();
+  const preservedBuiltinSkillNames = new Set(options.preservedBuiltinSkillNames ?? []);
+
+  await fs.mkdir(autoSkillsDir, { recursive: true });
+
+  const [templateApps, managedApps] = await Promise.all([
+    Promise.all(templateRoots.map((root) => loadResolvedSkillAppsFromRoot(root, 'template'))),
+    loadResolvedSkillAppsFromRoot(managedRoot, 'managed'),
+  ]);
+
+  const desiredBySkill = new Map<string, (typeof managedApps)[number]>();
+  for (const app of templateApps.flat()) {
+    desiredBySkill.set(app.skillName, app);
+  }
+  for (const app of managedApps) {
+    desiredBySkill.set(app.skillName, app);
+  }
+
+  let changed = false;
+  const appliedSkillNames = new Set<string>();
+  for (const [skillName, app] of desiredBySkill) {
+    if (preservedBuiltinSkillNames.has(skillName)) {
+      console.warn(`[AionUi] Skipping SkillApp projection "${skillName}" because a builtin auto skill already exists`);
+      continue;
+    }
+
+    const targetSkillDir = path.join(autoSkillsDir, skillName);
+    const projectionMode = app.source === 'managed' ? 'symlink' : 'copy';
+    changed = (await replaceSkillProjection(targetSkillDir, app.skillDirectory, projectionMode)) || changed;
+    appliedSkillNames.add(skillName);
+  }
+
+  for (const entry of readdirSync(autoSkillsDir, { withFileTypes: true })) {
+    if (!entry.isDirectory() && !entry.isSymbolicLink()) continue;
+    if (preservedBuiltinSkillNames.has(entry.name)) continue;
+    if (appliedSkillNames.has(entry.name)) continue;
+    await fs.rm(path.join(autoSkillsDir, entry.name), { recursive: true, force: true });
+    changed = true;
+  }
+
+  if (changed) {
+    await resetNativeSkillProjectionCaches();
+  }
+}
+
+/**
+ * Replace a runtime skill projection with the managed bundle's skill root.
+ * Existing workspace `.claude/.gemini/.codex/.../skills/<skillName>` links
+ * continue to resolve through the shared auto-skills directory.
+ */
+const syncManagedSkillAppProjection = async (skillName: string, skillDirectory: string): Promise<void> => {
+  const autoSkillsDir = getAutoSkillsDir();
+  const targetSkillDir = path.join(autoSkillsDir, skillName);
+  await fs.mkdir(autoSkillsDir, { recursive: true });
+  const changed = await replaceSkillProjection(targetSkillDir, skillDirectory, 'symlink');
+  if (changed) {
+    await resetNativeSkillProjectionCaches();
+  }
 };
 
 /**
@@ -372,43 +538,14 @@ const getCronSkillsDir = () => {
 const initBuiltinAssistantRules = async (): Promise<void> => {
   const assistantsDir = getAssistantsDir();
 
-  // In development, use project root. In production, use app.getAppPath().
-  // viteStaticCopy maps src/process/resources/* to root-level dirs in the asar.
-  // 开发模式下使用项目根目录，生产模式下 viteStaticCopy 将资源映射到 asar 根级目录。
-  const resolveBuiltinDir = (dirPath: string): string => {
-    const platform = getPlatformServices().paths;
-    const appPath = platform.getAppPath()!;
-    let candidates: string[];
-    if (platform.isPackaged()) {
-      // In production, viteStaticCopy maps src/process/resources/* to root-level dirs in the asar.
-      // skills/ and assistant/ are read from asar at startup and copied to user config dirs.
-      const RESOURCES_PREFIX = 'src/process/resources/';
-      const prodPath = dirPath.startsWith(RESOURCES_PREFIX) ? dirPath.slice(RESOURCES_PREFIX.length) : dirPath;
-      candidates = [path.join(appPath, prodPath)];
-    } else {
-      // In dev, viteStaticCopy doesn't run; resolve source paths directly.
-      // appPath is the project root, so a single join is sufficient.
-      candidates = [path.join(appPath, dirPath)];
-    }
-
-    for (const candidate of candidates) {
-      if (existsSync(candidate)) {
-        return candidate;
-      }
-    }
-
-    console.warn(`[AionUi] Could not find builtin ${dirPath} directory, tried:`, candidates);
-    return candidates[0];
-  };
-
   const presetsNeedDefaultRulesDir = ASSISTANT_PRESETS.some(
     (preset) => !preset.resourceDir && Object.keys(preset.ruleFiles).length > 0
   );
-  const rulesDir = presetsNeedDefaultRulesDir ? resolveBuiltinDir('rules') : '';
+  const rulesDir = presetsNeedDefaultRulesDir ? resolveBuiltinResourceDir('rules') : '';
   // resolveBuiltinDir("src/process/resources/skills") works for packaged Electron
   // (viteStaticCopy outputs to skills/ which matches after stripping the prefix),
   // but in standalone server mode the actual path differs.
-  let builtinSkillsDir = resolveBuiltinDir('src/process/resources/skills');
+  let builtinSkillsDir = resolveBuiltinResourceDir('src/process/resources/skills');
   if (!existsSync(builtinSkillsDir)) {
     const skillsFallbacks = [
       // Standalone production: bundled alongside server binary by build-server.mjs
@@ -450,6 +587,19 @@ const initBuiltinAssistantRules = async (): Promise<void> => {
     }
   }
 
+  const builtinAutoSourceDir = path.join(builtinSkillsDir, '_builtin');
+  const builtinAutoSkillNames = existsSync(builtinAutoSourceDir)
+    ? readdirSync(builtinAutoSourceDir, { withFileTypes: true })
+        .filter((entry) => entry.isDirectory() || entry.isSymbolicLink())
+        .map((entry) => entry.name)
+    : [];
+  await syncSkillAppSkillProjections({
+    autoSkillsDir: getAutoSkillsDir(),
+    managedRoot: getManagedSkillAppsRoot(),
+    templateRoots: getSkillAppTemplateRoots(),
+    preservedBuiltinSkillNames: builtinAutoSkillNames,
+  });
+
   // Ensure user skills directory exists
   if (!existsSync(userSkillsDir)) {
     mkdirSync(userSkillsDir);
@@ -471,8 +621,8 @@ const initBuiltinAssistantRules = async (): Promise<void> => {
 
     // 如果设置了 resourceDir，使用该目录；否则使用默认的 rules/ 目录
     // If resourceDir is set, use that directory; otherwise use default rules/ directory
-    const presetRulesDir = preset.resourceDir ? resolveBuiltinDir(preset.resourceDir) : rulesDir;
-    const presetSkillsDir = preset.resourceDir ? resolveBuiltinDir(preset.resourceDir) : builtinSkillsDir;
+    const presetRulesDir = preset.resourceDir ? resolveBuiltinResourceDir(preset.resourceDir) : rulesDir;
+    const presetSkillsDir = preset.resourceDir ? resolveBuiltinResourceDir(preset.resourceDir) : builtinSkillsDir;
 
     // 复制规则文件 / Copy rule files
     const hasRuleFiles = Object.keys(preset.ruleFiles).length > 0;
@@ -1085,9 +1235,12 @@ export {
   getSkillsDir,
   getBuiltinSkillsCopyDir,
   getAutoSkillsDir,
+  getManagedSkillAppsRoot,
+  getSkillAppTemplateRoots,
   getCronSkillsDir,
   BUILTIN_IMAGE_GEN_ID,
   getBuiltinMcpScriptPath,
+  syncManagedSkillAppProjection,
 };
 
 /**

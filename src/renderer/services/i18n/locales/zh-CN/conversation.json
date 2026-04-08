@@ -182,6 +182,30 @@
       "noUnstaged": "没有未暂存的更改",
       "noStaged": "没有已暂存的更改"
     },
+    "skillApps": {
+      "tab": "技能应用",
+      "title": "技能应用",
+      "description": "查看并管理当前工作空间中的 SkillApp。",
+      "empty": "暂无可用的技能应用",
+      "emptyDescription": "发现到的 SkillApp 会显示在这里。",
+      "refresh": "刷新",
+      "openBundle": "打开 Bundle",
+      "open": "打开",
+      "stop": "停止",
+      "skillLabel": "技能",
+      "backendLabel": "后端",
+      "loadFailed": "加载 SkillApp 失败",
+      "openBundleFailed": "打开 SkillApp Bundle 失败",
+      "openFailed": "打开 SkillApp 失败",
+      "stopFailed": "停止 SkillApp 失败",
+      "status": {
+        "available": "可用",
+        "starting": "启动中",
+        "open": "已打开",
+        "running": "运行中",
+        "error": "异常"
+      }
+    },
     "openWorkspace": "打开工作区文件夹",
     "openWith": {
       "vscode": "VS Code",

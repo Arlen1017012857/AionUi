@@ -31,6 +31,7 @@ import fs from 'fs';
 import path from 'path';
 import { migrateConversationToDatabase } from './migrationUtils';
 import { ConversationSideQuestionService } from './services/ConversationSideQuestionService';
+import { agentEventRouter, skillAppRuntime } from '@process/services/skillapp';
 
 const refreshTrayMenuSafely = async (): Promise<void> => {
   try {
@@ -510,12 +511,22 @@ export function initConversationBridge(
       workspaceFiles = (files ?? []).filter((f) => path.isAbsolute(f));
     }
 
+    const skillAppContext = [
+      skillAppRuntime.getAgentContext({ conversationId: conversation_id, workspace: task.workspace }),
+    ]
+      .concat(agentEventRouter.consumeNextTurnSummary(conversation_id))
+      .filter(Boolean)
+      .join('\n');
+    const inputForAgent = skillAppContext
+      ? `[SkillApp State]\n${skillAppContext}\n\n[User Request]\n${other.input}`
+      : other.input;
+
     // Precompute agent content with optional skill injection.
     // OpenClaw uses full-content mode: inject full skill text rather than index paths,
     // because the CLI may not proactively read SKILL.md files the way ACP agents do.
-    let agentContent = other.input;
+    let agentContent = inputForAgent;
     if (other.injectSkills?.length) {
-      agentContent = await prepareFirstMessage(other.input, {
+      agentContent = await prepareFirstMessage(inputForAgent, {
         enabledSkills: other.injectSkills,
       });
       // Provide absolute skills directory so agent can resolve relative script paths
@@ -535,6 +546,7 @@ export function initConversationBridge(
       await task.sendMessage({
         ...other,
         content: other.input,
+        skillAppContext,
         files: workspaceFiles,
         agentContent,
       });

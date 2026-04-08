@@ -1,0 +1,29 @@
+{
+  "id": "todo",
+  "displayName": "TODO",
+  "description": "Workspace-scoped TODO SkillApp with a PocketBase backend.",
+  "skill": {
+    "name": "todo",
+    "file": "skill/SKILL.md",
+    "description": "Manage workspace TODO items and open the TODO app."
+  },
+  "frontend": {
+    "entrypoint": "frontend/index.html",
+    "directory": "frontend"
+  },
+  "backend": {
+    "provider": "pocketbase",
+    "migrationsDir": "backend/pocketbase/migrations",
+    "collectionPrefix": "app_todo_"
+  },
+  "preview": {
+    "title": "TODO"
+  },
+  "activation": {
+    "openOnLoad": true,
+    "idleTimeoutMs": 300000
+  },
+  "events": {
+    "defaultPolicy": "state-only"
+  }
+}

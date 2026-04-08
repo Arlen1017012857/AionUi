@@ -27,6 +27,8 @@ export interface PreviewMetadata {
   filePath?: string; // 工作空间文件的绝对路径 / Absolute file path in workspace
   workspace?: string; // 工作空间根目录 / Workspace root directory
   editable?: boolean; // 是否可编辑 / Whether editable
+  skillAppId?: string;
+  conversationId?: string;
 }
 
 export interface PreviewTab {
@@ -212,6 +214,9 @@ export const PreviewProvider: React.FC<{ children: React.ReactNode }> = ({ child
       const normalizedFileName = normalize(meta?.fileName);
       const normalizedTitle = normalize(meta?.title);
       const normalizedFilePath = normalize(meta?.filePath);
+      const normalizedSkillAppId = normalize(meta?.skillAppId);
+      const normalizedConversationId = normalize(meta?.conversationId);
+      const normalizedWorkspace = normalize(meta?.workspace);
 
       return (
         tabList.find((tab) => {
@@ -219,6 +224,19 @@ export const PreviewProvider: React.FC<{ children: React.ReactNode }> = ({ child
           const tabFileName = normalize(tab.metadata?.fileName);
           const tabTitle = normalize(tab.metadata?.title);
           const tabFilePath = normalize(tab.metadata?.filePath);
+          const tabSkillAppId = normalize(tab.metadata?.skillAppId);
+          const tabConversationId = normalize(tab.metadata?.conversationId);
+          const tabWorkspace = normalize(tab.metadata?.workspace);
+
+          if (normalizedSkillAppId && tabSkillAppId && normalizedSkillAppId === tabSkillAppId) {
+            if (normalizedConversationId && tabConversationId && normalizedConversationId !== tabConversationId) {
+              return false;
+            }
+            if (normalizedWorkspace && tabWorkspace && normalizedWorkspace !== tabWorkspace) {
+              return false;
+            }
+            return true;
+          }
 
           // 优先通过 filePath 匹配（最可靠）/ Prefer matching by filePath (most reliable)
           if (normalizedFilePath && tabFilePath && normalizedFilePath === tabFilePath) return true;
@@ -331,12 +349,23 @@ export const PreviewProvider: React.FC<{ children: React.ReactNode }> = ({ child
     [extractFileName, findPreviewTabInList]
   );
 
+  const markSkillAppVisibility = useCallback((tab: PreviewTab, visible: boolean) => {
+    if (!tab.metadata?.skillAppId) return;
+    void ipcBridge.skillApp.setVisibility.invoke({
+      appId: tab.metadata.skillAppId,
+      workspace: tab.metadata.workspace,
+      conversationId: tab.metadata.conversationId,
+      visible,
+    });
+  }, []);
+
   const closePreview = useCallback(() => {
+    tabs.forEach((tab) => markSkillAppVisibility(tab, false));
     setIsOpen(false);
     setTabs([]);
     setActiveTabId(null);
     setDomSnippets([]);
-  }, []);
+  }, [tabs, markSkillAppVisibility]);
 
   // Track last-known mtime per file path for external change detection
   const fileMtimeRef = useRef<Map<string, number>>(new Map());
@@ -348,6 +377,9 @@ export const PreviewProvider: React.FC<{ children: React.ReactNode }> = ({ child
         const tabToClose = prevTabs.find((tab) => tab.id === tabId);
         if (tabToClose?.metadata?.filePath) {
           fileMtimeRef.current.delete(tabToClose.metadata.filePath);
+        }
+        if (tabToClose) {
+          markSkillAppVisibility(tabToClose, false);
         }
 
         const newTabs = prevTabs.filter((tab) => tab.id !== tabId);
@@ -367,7 +399,7 @@ export const PreviewProvider: React.FC<{ children: React.ReactNode }> = ({ child
         return newTabs;
       });
     },
-    [activeTabId]
+    [activeTabId, markSkillAppVisibility]
   );
 
   const closePreviewByIdentity = useCallback(

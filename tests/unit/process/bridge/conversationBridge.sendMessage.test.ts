@@ -86,6 +86,17 @@ vi.mock('@/process/task/agentUtils', () => ({
   prepareFirstMessage: vi.fn(async (input: string) => input),
 }));
 
+vi.mock('@process/services/skillapp', () => ({
+  agentEventRouter: {
+    consumeNextTurnSummary: vi.fn(() => ''),
+  },
+  skillAppRuntime: {
+    getAgentContext: vi.fn(
+      () => 'Active SkillApp: TODO (todo)\nSession file: /mock/workspace/.aionui/skillapps/todo/session.json'
+    ),
+  },
+}));
+
 // Import after mocks
 const { initConversationBridge } = await import('@/process/bridge/conversationBridge');
 
@@ -162,7 +173,10 @@ describe('conversationBridge.sendMessage', () => {
       expect.objectContaining({
         content: 'hello',
         files: [],
-        agentContent: 'hello',
+        agentContent:
+          '[SkillApp State]\nActive SkillApp: TODO (todo)\nSession file: /mock/workspace/.aionui/skillapps/todo/session.json\n\n[User Request]\nhello',
+        skillAppContext:
+          'Active SkillApp: TODO (todo)\nSession file: /mock/workspace/.aionui/skillapps/todo/session.json',
       })
     );
   });

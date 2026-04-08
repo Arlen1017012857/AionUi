@@ -77,6 +77,7 @@ export type {
   ExtAssistant,
   ExtAgent,
   ExtSkill,
+  ExtSkillApp,
   ExtChannelPlugin,
   ExtTheme,
   ExtModelProvider,

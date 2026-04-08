@@ -11,6 +11,7 @@ import { resolveAcpAdapters } from './resolvers/AcpAdapterResolver';
 import { resolveMcpServers } from './resolvers/McpServerResolver';
 import { resolveAssistants, resolveAgents } from './resolvers/AssistantResolver';
 import { resolveSkills } from './resolvers/SkillResolver';
+import { resolveSkillApps, type SkillAppContribution } from './resolvers/SkillAppResolver';
 import { resolveThemes } from './resolvers/ThemeResolver';
 import { resolveChannelPlugins } from './resolvers/ChannelPluginResolver';
 import { resolveWebuiContributions, type WebuiContribution } from './resolvers/WebuiResolver';
@@ -42,6 +43,7 @@ export class ExtensionRegistry {
   private _assistants: Record<string, unknown>[] = [];
   private _agents: Record<string, unknown>[] = [];
   private _skills: Array<{ name: string; description: string; location: string }> = [];
+  private _skillAppContributions: SkillAppContribution[] = [];
   private _themes: ICssTheme[] = [];
   private _channelPlugins = new Map<string, { constructor: unknown; meta: unknown }>();
   private _webuiContributions: WebuiContribution[] = [];
@@ -167,6 +169,7 @@ export class ExtensionRegistry {
           `${this._assistants.length} assistant(s), ` +
           `${this._agents.length} agent(s), ` +
           `${this._skills.length} skill(s), ` +
+          `${this._skillAppContributions.length} skill app(s), ` +
           `${this._themes.length} theme(s), ` +
           `${this._channelPlugins.size} channel plugin(s), ` +
           `${this._webuiContributions.length} webui contribution(s), ` +
@@ -317,6 +320,7 @@ export class ExtensionRegistry {
     this._acpAdapters = resolveAcpAdapters(enabledExtensions);
     this._mcpServers = resolveMcpServers(enabledExtensions);
     this._skills = resolveSkills(enabledExtensions);
+    this._skillAppContributions = resolveSkillApps(enabledExtensions);
     this._themes = resolveThemes(enabledExtensions);
     this._channelPlugins = resolveChannelPlugins(enabledExtensions) as Map<
       string,
@@ -366,6 +370,11 @@ export class ExtensionRegistry {
   /** Get all extension-contributed skills */
   getSkills(): Array<{ name: string; description: string; location: string }> {
     return this._skills;
+  }
+
+  /** Get all extension-contributed SkillApps */
+  getSkillAppContributions(): SkillAppContribution[] {
+    return this._skillAppContributions;
   }
 
   /** Get all extension-contributed themes (converted to ICssTheme) */

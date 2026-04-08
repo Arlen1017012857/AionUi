@@ -37,6 +37,13 @@ if (existsSync(skillsSrc)) {
   cpSync(skillsSrc, resolve('dist-server/skills'), { recursive: true });
 }
 
+// Copy built-in starter SkillApp templates to dist-server/skillapp-templates/
+// so standalone mode can provision managed bundles on demand.
+const skillAppsSrc = resolve('src/process/resources/skillapp-templates');
+if (existsSync(skillAppsSrc)) {
+  cpSync(skillAppsSrc, resolve('dist-server/skillapp-templates'), { recursive: true });
+}
+
 // Stub out Vite-specific .wasm?binary imports for the main server entry —
 // server.mjs serves static files and never executes WASM directly.
 const wasmStubPlugin = {

@@ -177,6 +177,30 @@
       "noUnstaged": "Hazırlanmamış değişiklik yok",
       "noStaged": "Hazırlanmış değişiklik yok"
     },
+    "skillApps": {
+      "tab": "SkillApps",
+      "title": "SkillApps",
+      "description": "Bu çalışma alanındaki SkillApp'leri açın ve yönetin.",
+      "empty": "Kullanılabilir SkillApp yok",
+      "emptyDescription": "Keşfedilen SkillApp'ler burada görünür.",
+      "refresh": "Yenile",
+      "openBundle": "Bundle'ı Aç",
+      "open": "Aç",
+      "stop": "Durdur",
+      "skillLabel": "Skill",
+      "backendLabel": "Arka uç",
+      "loadFailed": "SkillApp'ler yüklenemedi",
+      "openBundleFailed": "SkillApp bundle'ı açılamadı",
+      "openFailed": "SkillApp açılamadı",
+      "stopFailed": "SkillApp durdurulamadı",
+      "status": {
+        "available": "Kullanılabilir",
+        "starting": "Başlatılıyor",
+        "open": "Açık",
+        "running": "Çalışıyor",
+        "error": "Hata"
+      }
+    },
     "openWorkspace": "Çalışma alanını aç",
     "openWith": {
       "vscode": "VS Code",

@@ -15,13 +15,22 @@ describe('builtin skills sync', () => {
   let tmpDir: string;
   let srcDir: string;
   let destDir: string;
+  let autoSkillsDir: string;
+  let templateRoot: string;
+  let managedRoot: string;
 
   beforeEach(async () => {
     tmpDir = await fsPromises.mkdtemp(path.join(os.tmpdir(), 'aionui-test-'));
     srcDir = path.join(tmpDir, 'source');
     destDir = path.join(tmpDir, 'builtin-skills');
+    autoSkillsDir = path.join(destDir, '_builtin');
+    templateRoot = path.join(tmpDir, 'templates');
+    managedRoot = path.join(tmpDir, 'managed');
     mkdirSync(srcDir, { recursive: true });
     mkdirSync(destDir, { recursive: true });
+    mkdirSync(autoSkillsDir, { recursive: true });
+    mkdirSync(templateRoot, { recursive: true });
+    mkdirSync(managedRoot, { recursive: true });
   });
 
   afterEach(async () => {
@@ -65,6 +74,43 @@ describe('builtin skills sync', () => {
     const dir = path.join(base, name);
     mkdirSync(dir, { recursive: true });
     await fsPromises.writeFile(path.join(dir, 'SKILL.md'), content, 'utf-8');
+  };
+
+  const createSkillAppSkill = async (base: string, appId: string, content: string) => {
+    const skillDir = path.join(base, appId, 'skill');
+    mkdirSync(skillDir, { recursive: true });
+    await fsPromises.writeFile(path.join(skillDir, 'SKILL.md'), content, 'utf-8');
+  };
+
+  const syncSkillAppProjections = async (preservedBuiltinSkillNames: string[] = []) => {
+    const desired = new Map<string, { source: 'template' | 'managed'; skillDir: string }>();
+    const collect = (root: string, source: 'template' | 'managed') =>
+      readdirSync(root, { withFileTypes: true })
+        .filter((entry) => entry.isDirectory())
+        .forEach((entry) => {
+          desired.set(entry.name, { source, skillDir: path.join(root, entry.name, 'skill') });
+        });
+
+    collect(templateRoot, 'template');
+    collect(managedRoot, 'managed');
+
+    for (const [skillName, projection] of desired) {
+      if (preservedBuiltinSkillNames.includes(skillName)) continue;
+      const target = path.join(autoSkillsDir, skillName);
+      await fsPromises.rm(target, { recursive: true, force: true });
+      if (projection.source === 'managed') {
+        await fsPromises.symlink(projection.skillDir, target, 'junction');
+      } else {
+        await copyRecursive(projection.skillDir, target);
+      }
+    }
+
+    for (const entry of readdirSync(autoSkillsDir, { withFileTypes: true })) {
+      if (!entry.isDirectory() && !entry.isSymbolicLink()) continue;
+      if (preservedBuiltinSkillNames.includes(entry.name)) continue;
+      if (desired.has(entry.name)) continue;
+      await fsPromises.rm(path.join(autoSkillsDir, entry.name), { recursive: true, force: true });
+    }
   };
 
   it('should copy new skills from source to dest', async () => {
@@ -129,5 +175,35 @@ describe('builtin skills sync', () => {
     await syncBuiltinSkills();
 
     expect(existsSync(path.join(destDir, 'README.md'))).toBe(true);
+  });
+
+  it('projects starter SkillApp template skills into the auto skills directory', async () => {
+    await createSkillAppSkill(templateRoot, 'todo', '# TODO template');
+
+    await syncSkillAppProjections();
+
+    expect(await fsPromises.readFile(path.join(autoSkillsDir, 'todo', 'SKILL.md'), 'utf-8')).toBe('# TODO template');
+  });
+
+  it('lets managed SkillApp bundles override starter template projections via symlink', async () => {
+    await createSkillAppSkill(templateRoot, 'todo', '# TODO template');
+    await createSkillAppSkill(managedRoot, 'todo', '# TODO managed');
+
+    await syncSkillAppProjections();
+
+    const target = path.join(autoSkillsDir, 'todo');
+    expect((await fsPromises.lstat(target)).isSymbolicLink()).toBe(true);
+    expect(await fsPromises.realpath(target)).toBe(await fsPromises.realpath(path.join(managedRoot, 'todo', 'skill')));
+  });
+
+  it('removes stale projected SkillApp skills when no template or managed bundle remains', async () => {
+    await createSkillAppSkill(templateRoot, 'todo', '# TODO template');
+    await syncSkillAppProjections();
+    expect(existsSync(path.join(autoSkillsDir, 'todo'))).toBe(true);
+
+    await fsPromises.rm(path.join(templateRoot, 'todo'), { recursive: true, force: true });
+    await syncSkillAppProjections();
+
+    expect(existsSync(path.join(autoSkillsDir, 'todo'))).toBe(false);
   });
 });

@@ -88,7 +88,7 @@ export function setupBasicMiddleware(app: Express): void {
     csrf(
       CSRF_SECRET,
       ['POST', 'PUT', 'DELETE', 'PATCH'], // Protected methods
-      ['/login', '/api/auth/qr-login', '/api/upload'], // Excluded: login form, QR login, and file upload (uses API token auth)
+      ['/login', '/api/auth/qr-login', '/api/upload', /^\/api\/skillapps(?:\/|$)/], // Excluded token-protected API paths
       [] // No service worker URLs
     )
   );
@@ -112,7 +112,7 @@ function normalizeOrigin(origin: string): string | null {
     }
     const portSuffix = url.port ? `:${url.port}` : '';
     return `${url.protocol}//${url.hostname}${portSuffix}`;
-  } catch (error) {
+  } catch {
     return null;
   }
 }
@@ -149,6 +149,15 @@ function getConfiguredOrigins(port: number, allowRemote: boolean): Set<string> {
   return baseOrigins;
 }
 
+function isLoopbackOrigin(origin: string): boolean {
+  try {
+    const url = new URL(origin);
+    return url.hostname === 'localhost' || url.hostname === '127.0.0.1' || url.hostname === '::1';
+  } catch {
+    return false;
+  }
+}
+
 export function setupCors(app: Express, port: number, allowRemote: boolean): void {
   const allowedOrigins = getConfiguredOrigins(port, allowRemote);
 
@@ -168,7 +177,7 @@ export function setupCors(app: Express, port: number, allowRemote: boolean): voi
         }
 
         const normalizedOrigin = normalizeOrigin(origin);
-        if (normalizedOrigin && allowedOrigins.has(normalizedOrigin)) {
+        if (normalizedOrigin && (allowedOrigins.has(normalizedOrigin) || isLoopbackOrigin(normalizedOrigin))) {
           callback(null, true);
           return;
         }

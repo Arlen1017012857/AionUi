@@ -29,6 +29,7 @@ import { initPreviewHistoryBridge } from './previewHistoryBridge';
 import { initShellBridge } from './shellBridge';
 import { initStarOfficeBridge } from './starOfficeBridge';
 import { initSpeechToTextBridge } from './speechToTextBridge';
+import { initSkillAppBridge } from './skillAppBridge';
 import { initTaskBridge } from './taskBridge';
 import { initUpdateBridge } from './updateBridge';
 import { initWebuiBridge } from './webuiBridge';
@@ -73,6 +74,7 @@ export function initAllBridges(deps: BridgeDependencies): void {
   initMcpBridge();
   initPreviewHistoryBridge();
   initDocumentBridge();
+  initSkillAppBridge(deps.workerTaskManager);
   initPptPreviewBridge();
   initOfficeWatchBridge();
   initWindowControlsBridge();
@@ -129,6 +131,7 @@ export {
   initPptPreviewBridge,
   initPreviewHistoryBridge,
   initShellBridge,
+  initSkillAppBridge,
   initSpeechToTextBridge,
   initStarOfficeBridge,
   initSystemSettingsBridge,

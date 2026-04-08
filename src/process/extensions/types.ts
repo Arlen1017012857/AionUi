@@ -264,6 +264,13 @@ export const ExtSkillSchema = z.object({
   file: z.string().min(1, 'Skill file path is required'),
 });
 
+// ============ SkillApp Schema ============
+
+export const ExtSkillAppSchema = z.object({
+  id: z.string().min(1, 'SkillApp id is required'),
+  manifest: z.string().min(1, 'SkillApp manifest path is required'),
+});
+
 // ============ Channel Plugin Schema ============
 
 export const ExtChannelPluginSchema = z.object({
@@ -428,6 +435,13 @@ function validateContributeIds(contributes: z.infer<typeof ExtContributesSchemaB
       return `Duplicate skill names: ${[...new Set(duplicates)].join(', ')}`;
     }
   }
+  if (contributes.skillApps) {
+    const ids = contributes.skillApps.map((app) => app.id);
+    const duplicates = ids.filter((id, idx) => ids.indexOf(id) !== idx);
+    if (duplicates.length > 0) {
+      return `Duplicate SkillApp IDs: ${[...new Set(duplicates)].join(', ')}`;
+    }
+  }
   if (contributes.channelPlugins) {
     const types = contributes.channelPlugins.map((p) => p.type);
     const duplicates = types.filter((type, idx) => types.indexOf(type) !== idx);
@@ -487,6 +501,7 @@ const ExtContributesSchemaBase = z.object({
   /** Agent presets — structurally identical to assistants but semantically represent autonomous agents (e.g. leis, openfang, opencode style) */
   agents: z.array(ExtAssistantSchema).optional(),
   skills: z.array(ExtSkillSchema).optional(),
+  skillApps: z.array(ExtSkillAppSchema).optional(),
   channelPlugins: z.array(ExtChannelPluginSchema).optional(),
   webui: ExtWebuiSchema.optional(),
   themes: z.array(ExtThemeSchema).optional(),
@@ -515,6 +530,7 @@ export type ExtMcpServer = z.infer<typeof ExtMcpServerSchema>;
 export type ExtAssistant = z.infer<typeof ExtAssistantSchema>;
 export type ExtAgent = z.infer<typeof ExtAssistantSchema>;
 export type ExtSkill = z.infer<typeof ExtSkillSchema>;
+export type ExtSkillApp = z.infer<typeof ExtSkillAppSchema>;
 export type ExtChannelPlugin = z.infer<typeof ExtChannelPluginSchema>;
 export type ExtTheme = z.infer<typeof ExtThemeSchema>;
 export type ExtWebui = z.infer<typeof ExtWebuiSchema>;

@@ -182,6 +182,30 @@
       "noUnstaged": "No unstaged changes",
       "noStaged": "No staged changes"
     },
+    "skillApps": {
+      "tab": "SkillApps",
+      "title": "SkillApps",
+      "description": "Open and manage SkillApps for this workspace.",
+      "empty": "No SkillApps available",
+      "emptyDescription": "Discovered SkillApps will appear here.",
+      "refresh": "Refresh",
+      "openBundle": "Open Bundle",
+      "open": "Open",
+      "stop": "Stop",
+      "skillLabel": "Skill",
+      "backendLabel": "Backend",
+      "loadFailed": "Failed to load SkillApps",
+      "openBundleFailed": "Failed to open SkillApp bundle",
+      "openFailed": "Failed to open SkillApp",
+      "stopFailed": "Failed to stop SkillApp",
+      "status": {
+        "available": "Available",
+        "starting": "Starting",
+        "open": "Open",
+        "running": "Running",
+        "error": "Error"
+      }
+    },
     "openWorkspace": "Open workspace folder",
     "openWith": {
       "vscode": "VS Code",

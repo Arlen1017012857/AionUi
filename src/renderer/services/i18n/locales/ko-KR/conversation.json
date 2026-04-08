@@ -182,6 +182,30 @@
       "noUnstaged": "스테이지되지 않은 변경 사항 없음",
       "noStaged": "스테이지된 변경 사항 없음"
     },
+    "skillApps": {
+      "tab": "SkillApps",
+      "title": "SkillApps",
+      "description": "이 워크스페이스의 SkillApp을 열고 관리합니다.",
+      "empty": "사용 가능한 SkillApp이 없습니다",
+      "emptyDescription": "검색된 SkillApp이 여기에 표시됩니다.",
+      "refresh": "새로고침",
+      "openBundle": "번들 열기",
+      "open": "열기",
+      "stop": "중지",
+      "skillLabel": "스킬",
+      "backendLabel": "백엔드",
+      "loadFailed": "SkillApp을 불러오지 못했습니다",
+      "openBundleFailed": "SkillApp 번들을 열지 못했습니다",
+      "openFailed": "SkillApp을 열지 못했습니다",
+      "stopFailed": "SkillApp을 중지하지 못했습니다",
+      "status": {
+        "available": "사용 가능",
+        "starting": "시작 중",
+        "open": "열림",
+        "running": "실행 중",
+        "error": "오류"
+      }
+    },
     "openWorkspace": "작업 공간 열기",
     "openWith": {
       "vscode": "VS Code",

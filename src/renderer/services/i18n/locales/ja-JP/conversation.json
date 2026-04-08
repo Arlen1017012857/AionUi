@@ -182,6 +182,30 @@
       "noUnstaged": "ステージされていない変更はありません",
       "noStaged": "ステージ済みの変更はありません"
     },
+    "skillApps": {
+      "tab": "SkillApps",
+      "title": "SkillApps",
+      "description": "このワークスペースの SkillApp を開いて管理します。",
+      "empty": "利用可能な SkillApp はありません",
+      "emptyDescription": "検出された SkillApp がここに表示されます。",
+      "refresh": "更新",
+      "openBundle": "Bundle を開く",
+      "open": "開く",
+      "stop": "停止",
+      "skillLabel": "スキル",
+      "backendLabel": "バックエンド",
+      "loadFailed": "SkillApp の読み込みに失敗しました",
+      "openBundleFailed": "SkillApp Bundle を開けませんでした",
+      "openFailed": "SkillApp を開けませんでした",
+      "stopFailed": "SkillApp を停止できませんでした",
+      "status": {
+        "available": "利用可能",
+        "starting": "起動中",
+        "open": "開いています",
+        "running": "実行中",
+        "error": "エラー"
+      }
+    },
     "openWorkspace": "ワークスペースを開く",
     "openWith": {
       "vscode": "VS Code",

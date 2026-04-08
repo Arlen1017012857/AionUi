@@ -182,6 +182,30 @@
       "noUnstaged": "沒有未暫存的變更",
       "noStaged": "沒有已暫存的變更"
     },
+    "skillApps": {
+      "tab": "技能應用",
+      "title": "技能應用",
+      "description": "檢視並管理目前工作空間中的 SkillApp。",
+      "empty": "目前沒有可用的技能應用",
+      "emptyDescription": "偵測到的 SkillApp 會顯示在這裡。",
+      "refresh": "重新整理",
+      "openBundle": "開啟 Bundle",
+      "open": "開啟",
+      "stop": "停止",
+      "skillLabel": "技能",
+      "backendLabel": "後端",
+      "loadFailed": "載入 SkillApp 失敗",
+      "openBundleFailed": "開啟 SkillApp Bundle 失敗",
+      "openFailed": "開啟 SkillApp 失敗",
+      "stopFailed": "停止 SkillApp 失敗",
+      "status": {
+        "available": "可用",
+        "starting": "啟動中",
+        "open": "已開啟",
+        "running": "執行中",
+        "error": "異常"
+      }
+    },
     "openWorkspace": "開啟工作區資料夾",
     "openWith": {
       "vscode": "VS Code",

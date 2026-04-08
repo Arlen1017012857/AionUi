@@ -22,6 +22,7 @@ import MigrationModal from './components/MigrationModal';
 import PasteConfirmModal from './components/PasteConfirmModal';
 import WorkspaceContextMenu from './components/WorkspaceContextMenu';
 import WorkspaceDialogs from './components/WorkspaceDialogs';
+import SkillAppsPanel from './components/SkillAppsPanel';
 import WorkspaceTabBar from './components/WorkspaceTabBar';
 import WorkspaceToolbar from './components/WorkspaceToolbar';
 import { useFileChanges } from './hooks/useFileChanges';
@@ -54,7 +55,7 @@ const ChatWorkspace: React.FC<WorkspaceProps> = ({
   const { t } = useTranslation();
   const layout = useLayoutContext();
   const isMobile = layout?.isMobile ?? false;
-  const { openPreview } = usePreviewContext();
+  const { openPreview, closePreviewByIdentity } = usePreviewContext();
 
   // Message API setup
   const [internalMessageApi, messageContext] = Message.useMessage();
@@ -547,6 +548,18 @@ const ChatWorkspace: React.FC<WorkspaceProps> = ({
               onUnstageAll={fileChangesHook.unstageAll}
               onDiscardFile={fileChangesHook.discardFile}
               onResetFile={fileChangesHook.resetFile}
+            />
+          </FlexFullContainer>
+        )}
+
+        {!isWorkspaceCollapsed && activeTab === 'skillapps' && (
+          <FlexFullContainer containerClassName='overflow-y-auto'>
+            <SkillAppsPanel
+              t={t}
+              workspace={workspace}
+              conversationId={conversation_id}
+              messageApi={messageApi}
+              closePreviewByIdentity={closePreviewByIdentity}
             />
           </FlexFullContainer>
         )}

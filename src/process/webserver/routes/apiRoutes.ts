@@ -10,6 +10,7 @@ import fsPromises from 'fs/promises';
 import http from 'node:http';
 import path from 'path';
 import multer from 'multer';
+import type { SkillAppAguiEvent } from '@/common/types/skillapp';
 import { getDatabase } from '@process/services/database';
 import { getSystemDir } from '@process/utils/initStorage';
 import { ProcessConfig } from '@process/utils/initStorage';
@@ -18,6 +19,11 @@ import { ExtensionRegistry } from '@process/extensions';
 import { SpeechToTextService } from '@process/bridge/services/SpeechToTextService';
 import { isActivePreviewPort } from '@process/bridge/pptPreviewBridge';
 import { isActiveOfficeWatchPort } from '@process/bridge/officeWatchBridge';
+import {
+  pocketBaseProvider,
+  skillAppRuntime,
+  extractCollectionNameFromPocketBasePath,
+} from '@process/services/skillapp';
 import { AIONUI_TIMESTAMP_SEPARATOR } from '@/common/config/constants';
 import directoryApi from '../directoryApi';
 import { apiRateLimiter } from '../middleware/security';
@@ -134,6 +140,89 @@ function runMiddlewareStack(req: Request, res: Response, next: NextFunction, sta
     }
   };
   dispatch();
+}
+
+function getSkillAppToken(req: Request): string | null {
+  const headerToken = req.header('x-skillapp-token') || req.header('x-aionui-skillapp-token');
+  if (headerToken) return headerToken;
+  const queryToken = req.query.token || req.query.skillapp_token;
+  return typeof queryToken === 'string' && queryToken.length > 0 ? queryToken : null;
+}
+
+function buildSkillAppProxyTargetPath(req: Request): string {
+  const subPath = req.path || '/';
+  const queryIndex = req.url.indexOf('?');
+  if (queryIndex === -1) return subPath;
+
+  const params = new URLSearchParams(req.url.slice(queryIndex + 1));
+  params.delete('token');
+  params.delete('skillapp_token');
+  const query = params.toString();
+  return query ? `${subPath}?${query}` : subPath;
+}
+
+export function buildSkillAppCorsHeaders(origin?: string): Record<string, string> {
+  return {
+    'Access-Control-Allow-Origin': origin || '*',
+    'Access-Control-Allow-Methods': 'GET, POST, PATCH, DELETE, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, X-SkillApp-Token, X-AionUi-SkillApp-Token',
+    'Access-Control-Max-Age': '600',
+  };
+}
+
+export function serializeSkillAppEventSse(event: SkillAppAguiEvent): string {
+  return `event: skillapp\ndata: ${JSON.stringify(event)}\n\n`;
+}
+
+function applySkillAppCors(req: Request, res: Response, next: NextFunction): void {
+  const origin = req.header('origin') || undefined;
+  const headers = buildSkillAppCorsHeaders(origin);
+  for (const [key, value] of Object.entries(headers)) {
+    res.setHeader(key, value);
+  }
+  if (origin) {
+    res.setHeader('Vary', 'Origin');
+  }
+  if (req.method === 'OPTIONS') {
+    res.status(204).end();
+    return;
+  }
+  next();
+}
+
+function buildProxyHeaders(req: Request, host: string): Record<string, string | string[]> {
+  const hopByHop = new Set([
+    'connection',
+    'keep-alive',
+    'proxy-authenticate',
+    'proxy-authorization',
+    'te',
+    'trailer',
+    'transfer-encoding',
+    'upgrade',
+    'cookie',
+    'authorization',
+    'x-skillapp-token',
+    'x-aionui-skillapp-token',
+  ]);
+  const proxyHeaders: Record<string, string | string[]> = { host };
+  for (const [key, value] of Object.entries(req.headers)) {
+    if (!hopByHop.has(key.toLowerCase()) && value !== undefined) {
+      proxyHeaders[key] = value as string | string[];
+    }
+  }
+  return proxyHeaders;
+}
+
+function getBufferedRequestBody(req: Request, headers: Record<string, string | string[]>): Buffer | null {
+  if (!req.body || typeof req.body !== 'object' || Object.keys(req.body as Record<string, unknown>).length === 0) {
+    return null;
+  }
+
+  const bodyBuffer = Buffer.from(JSON.stringify(req.body));
+  headers['content-type'] = 'application/json';
+  headers['content-length'] = String(bodyBuffer.byteLength);
+  return bodyBuffer;
 }
 
 type MatchedApiRoute = {
@@ -637,6 +726,162 @@ export function registerApiRoutes(app: Express): void {
    * GET /api/office-watch-proxy/:port/*
    */
   registerOfficecliWatchProxy('/api/office-watch-proxy', isActiveOfficeWatchPort, 'Office watch preview');
+
+  /**
+   * SkillApp PocketBase scoped proxy and event endpoint.
+   * Uses a runtime-issued app token instead of PocketBase admin credentials.
+   */
+  app.use('/api/skillapps/:appId/events', applySkillAppCors);
+  app.get(
+    '/api/skillapps/:appId/events',
+    apiRateLimiter,
+    wrapRouteHandler(async (req: Request, res: Response) => {
+      const appId = req.params.appId as string;
+      const token = getSkillAppToken(req);
+      if (!token) {
+        res.status(401).json({ message: 'Missing SkillApp token' });
+        return;
+      }
+
+      const tokenSession = pocketBaseProvider.getSessionForToken(appId, token);
+      if (!tokenSession) {
+        res.status(403).json({ message: 'Invalid SkillApp token' });
+        return;
+      }
+
+      const conversationId =
+        typeof req.query.conversationId === 'string'
+          ? req.query.conversationId
+          : tokenSession.scopedToken.conversationId;
+      res.status(200);
+      res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+      res.setHeader('Cache-Control', 'no-cache, no-transform');
+      res.setHeader('Connection', 'keep-alive');
+      res.setHeader('X-Accel-Buffering', 'no');
+      res.flushHeaders?.();
+      res.write(': connected\n\n');
+
+      const unsubscribe = skillAppRuntime.subscribeToEvents(
+        {
+          appId,
+          conversationId,
+          workspace: tokenSession.session.workspace,
+        },
+        (event) => {
+          if (!res.writableEnded) {
+            res.write(serializeSkillAppEventSse(event));
+          }
+        }
+      );
+
+      const keepAlive = setInterval(() => {
+        if (!res.writableEnded) {
+          res.write(': keepalive\n\n');
+        }
+      }, 20_000);
+
+      req.on('close', () => {
+        clearInterval(keepAlive);
+        unsubscribe();
+        if (!res.writableEnded) {
+          res.end();
+        }
+      });
+    })
+  );
+  app.post(
+    '/api/skillapps/:appId/events',
+    apiRateLimiter,
+    wrapRouteHandler(async (req: Request, res: Response) => {
+      const appId = req.params.appId as string;
+      const token = getSkillAppToken(req);
+      if (!token) {
+        res.status(401).json({ message: 'Missing SkillApp token' });
+        return;
+      }
+
+      const tokenSession = pocketBaseProvider.getSessionForToken(appId, token);
+      if (!tokenSession) {
+        res.status(403).json({ message: 'Invalid SkillApp token' });
+        return;
+      }
+
+      const body = req.body && typeof req.body === 'object' ? (req.body as Record<string, unknown>) : {};
+      await skillAppRuntime.emitEvent({
+        appId,
+        conversationId:
+          typeof body.conversationId === 'string' ? body.conversationId : tokenSession.scopedToken.conversationId,
+        workspace: tokenSession.session.workspace,
+        type: typeof body.type === 'string' ? body.type : 'CUSTOM',
+        policy: body.policy === 'next-turn' || body.policy === 'immediate' ? body.policy : 'state-only',
+        payload: body.payload,
+        summary: typeof body.summary === 'string' ? body.summary : undefined,
+      });
+      res.json({ ok: true });
+    })
+  );
+
+  app.use('/api/skillapps/:appId/pb', applySkillAppCors, apiRateLimiter, (req: Request, res: Response) => {
+    const appId = req.params.appId as string;
+    const token = getSkillAppToken(req);
+    if (!token) {
+      res.status(401).json({ message: 'Missing SkillApp token' });
+      return;
+    }
+
+    const subPath = req.path || '/';
+    const collectionName = extractCollectionNameFromPocketBasePath(subPath);
+    if (!collectionName && subPath !== '/api/health') {
+      res.status(403).json({ message: 'SkillApp proxy only allows app collection access' });
+      return;
+    }
+
+    const tokenSession = pocketBaseProvider.getSessionForToken(appId, token, subPath);
+    if (!tokenSession) {
+      res.status(403).json({ message: 'Invalid SkillApp token or collection scope' });
+      return;
+    }
+
+    const targetPath = buildSkillAppProxyTargetPath(req);
+    const proxyHeaders = buildProxyHeaders(req, `127.0.0.1:${tokenSession.session.port}`);
+    const bodyBuffer = getBufferedRequestBody(req, proxyHeaders);
+
+    const proxyReq = http.request(
+      {
+        hostname: '127.0.0.1',
+        port: tokenSession.session.port,
+        path: targetPath,
+        method: req.method,
+        headers: proxyHeaders,
+        timeout: 30_000,
+      },
+      (proxyRes) => {
+        const statusCode = proxyRes.statusCode ?? 200;
+        const responseHeaders: Record<string, string | string[]> = {};
+        for (const [key, value] of Object.entries(proxyRes.headers)) {
+          if (value !== undefined) {
+            responseHeaders[key] = value as string | string[];
+          }
+        }
+        res.writeHead(statusCode, responseHeaders);
+        proxyRes.pipe(res, { end: true });
+      }
+    );
+
+    proxyReq.on('timeout', () => {
+      proxyReq.destroy();
+      if (!res.headersSent) res.status(504).json({ message: 'SkillApp PocketBase proxy timeout' });
+    });
+    proxyReq.on('error', () => {
+      if (!res.headersSent) res.status(502).json({ message: 'SkillApp PocketBase proxy error' });
+    });
+
+    if (bodyBuffer) {
+      proxyReq.end(bodyBuffer);
+    } else {
+      req.pipe(proxyReq, { end: true });
+    }
+  });
 
   /**
    * WeChat QR-code login (WebUI mode)

@@ -15,6 +15,8 @@ import type {
   AcpPermissionOption,
   AcpPermissionRequest,
   AcpSessionConfigOption,
+  ToolCallUpdate,
+  ToolCallUpdateStatus,
 } from '@/common/types/acpTypes';
 import { ACP_BACKENDS_ALL } from '@/common/types/acpTypes';
 import { ExtensionRegistry } from '@process/extensions';
@@ -36,10 +38,12 @@ import BaseAgentManager from './BaseAgentManager';
 import { IpcAgentEventEmitter } from './IpcAgentEventEmitter';
 import { hasCronCommands } from './CronCommandDetector';
 import { skillSuggestWatcher } from '@process/services/cron/SkillSuggestWatcher';
+import { skillAppRuntime } from '@process/services/skillapp';
 import { extractAndStripThinkTags } from './ThinkTagDetector';
 import type { AgentKillReason } from './IAgentManager';
 import { hasNativeSkillSupport } from '@/common/types/acpTypes';
 import { prepareFirstMessageWithSkillsIndex } from '@process/task/agentUtils';
+import { AcpSkillManager, buildSkillContentText, detectSkillLoadRequest } from './AcpSkillManager';
 import { extractTextFromMessage, processCronInMessage } from './MessageMiddleware';
 
 interface AcpAgentManagerData {
@@ -76,6 +80,63 @@ type BufferedStreamTextMessage = {
   timer: ReturnType<typeof setTimeout>;
 };
 
+type NativeSkillLoad = {
+  toolCallId: string;
+  skillName: string;
+};
+
+function extractTextContentFromAcpToolCallContent(
+  content: ToolCallUpdate['update']['content'] | ToolCallUpdateStatus['update']['content']
+): string[] {
+  if (!content) return [];
+  return content.flatMap((item) => {
+    if (item.type !== 'content' || item.content?.type !== 'text' || typeof item.content.text !== 'string') {
+      return [];
+    }
+    return [item.content.text];
+  });
+}
+
+export function extractNativeSkillLoadFromAcpToolCallMessage(message: IResponseMessage): NativeSkillLoad | null {
+  if (message.type !== 'acp_tool_call' || !message.data || typeof message.data !== 'object') {
+    return null;
+  }
+
+  const update = (message.data as ToolCallUpdate | ToolCallUpdateStatus).update;
+  if (!update?.toolCallId) {
+    return null;
+  }
+
+  const rawInput =
+    'rawInput' in update && update.rawInput && typeof update.rawInput === 'object' ? update.rawInput : undefined;
+  const rawSkill = typeof rawInput?.skill === 'string' ? rawInput.skill.trim() : '';
+  if (rawSkill) {
+    return {
+      toolCallId: update.toolCallId,
+      skillName: rawSkill,
+    };
+  }
+
+  const textCandidates = [
+    'title' in update && typeof update.title === 'string' ? update.title : '',
+    ...extractTextContentFromAcpToolCallContent(update.content),
+  ];
+  const joinedText = textCandidates.join('\n');
+  if (!/skill/i.test(joinedText)) {
+    return null;
+  }
+
+  const skillMatch = joinedText.match(/Launching skill:\s*([a-zA-Z0-9_-]+)/i);
+  if (!skillMatch) {
+    return null;
+  }
+
+  return {
+    toolCallId: update.toolCallId,
+    skillName: skillMatch[1],
+  };
+}
+
 class AcpAgentManager extends BaseAgentManager<AcpAgentManagerData, AcpPermissionOption> {
   workspace: string;
   agent: AcpAgent;
@@ -99,6 +160,7 @@ class AcpAgentManager extends BaseAgentManager<AcpAgentManagerData, AcpPermissio
   private acpAvailableSlashWaiters: Array<(commands: SlashCommandItem[]) => void> = [];
   private readonly streamDbFlushIntervalMs = 120;
   private readonly bufferedStreamTextMessages = new Map<string, BufferedStreamTextMessage>();
+  private readonly handledNativeSkillToolCalls = new Set<string>();
 
   constructor(data: AcpAgentManagerData) {
     super('acp', data, new IpcAgentEventEmitter());
@@ -164,6 +226,20 @@ class AcpAgentManager extends BaseAgentManager<AcpAgentManagerData, AcpPermissio
     for (const key of keys) {
       this.flushBufferedStreamTextMessage(key);
     }
+  }
+
+  private async handleNativeSkillToolCall(message: IResponseMessage): Promise<void> {
+    const nativeSkillLoad = extractNativeSkillLoadFromAcpToolCallMessage(message);
+    if (!nativeSkillLoad) return;
+    if (this.handledNativeSkillToolCalls.has(nativeSkillLoad.toolCallId)) return;
+
+    this.handledNativeSkillToolCalls.add(nativeSkillLoad.toolCallId);
+    mainLog('[AcpAgentManager]', `Detected native skill tool call: ${nativeSkillLoad.skillName}`);
+    await skillAppRuntime.handleSkillLoaded({
+      skillName: nativeSkillLoad.skillName,
+      conversationId: this.conversation_id,
+      workspace: this.workspace,
+    });
   }
 
   initAgent(data: AcpAgentManagerData = this.options) {
@@ -339,7 +415,7 @@ class AcpAgentManager extends BaseAgentManager<AcpAgentManagerData, AcpPermissio
             data: null,
           });
         },
-        onStreamEvent: (message) => {
+        onStreamEvent: async (message) => {
           // During bootstrap (warmup), suppress UI stream events to avoid
           // triggering sidebar loading spinner before user sends a message.
           if (this.bootstrapping) {
@@ -362,6 +438,14 @@ class AcpAgentManager extends BaseAgentManager<AcpAgentManagerData, AcpPermissio
           // 处理 preview_open 事件（chrome-devtools 导航拦截）
           if (handlePreviewOpenEvent(message)) {
             return; // Don't process further / 不需要继续处理
+          }
+
+          if (message.type === 'acp_tool_call') {
+            try {
+              await this.handleNativeSkillToolCall(message);
+            } catch (error) {
+              mainWarn('[AcpAgentManager]', 'Failed to handle native ACP skill tool call', error);
+            }
           }
 
           // Mark as finished when content is output (visible to user)
@@ -569,6 +653,36 @@ class AcpAgentManager extends BaseAgentManager<AcpAgentManagerData, AcpPermissio
             skillSuggestWatcher.onFinish(this.conversation_id);
           }
 
+          // Load requested skills and open associated SkillApps when the turn ends.
+          if (v.type === 'finish' && this.currentMsgContent) {
+            const skillRequests = detectSkillLoadRequest(this.currentMsgContent);
+            if (skillRequests.length > 0) {
+              const skillManager = AcpSkillManager.getInstance(this.options.enabledSkills);
+              await skillManager.discoverSkills(this.options.enabledSkills);
+              const skills = await skillManager.getSkills(skillRequests);
+              await Promise.all(
+                skillRequests.map((skillName) =>
+                  skillAppRuntime.handleSkillLoaded({
+                    skillName,
+                    conversationId: this.conversation_id,
+                    workspace: this.workspace,
+                  })
+                )
+              );
+              if (skills.length > 0 && this.agent) {
+                const skillContent = buildSkillContentText(skills);
+                const systemMessage: IResponseMessage = {
+                  type: 'system',
+                  conversation_id: this.conversation_id,
+                  msg_id: uuid(),
+                  data: skillContent,
+                };
+                ipcBridge.acpConversation.responseStream.emit(systemMessage);
+                await this.agent.sendMessage({ content: `[System Response]\n${skillContent}` });
+              }
+            }
+          }
+
           // Process cron commands when turn ends (finish signal)
           // ACP streams content in chunks, so we check the accumulated content here
           if (v.type === 'finish' && this.currentMsgContent && hasCronCommands(this.currentMsgContent)) {
@@ -683,6 +797,7 @@ class AcpAgentManager extends BaseAgentManager<AcpAgentManagerData, AcpPermissio
     cronMeta?: CronMessageMeta;
     hidden?: boolean;
     silent?: boolean;
+    skillAppContext?: string;
   }): Promise<{
     success: boolean;
     msg?: string;
@@ -740,6 +855,9 @@ class AcpAgentManager extends BaseAgentManager<AcpAgentManagerData, AcpPermissio
         let contentToSend = data.content;
         if (contentToSend.includes(AIONUI_FILES_MARKER)) {
           contentToSend = contentToSend.split(AIONUI_FILES_MARKER)[0].trimEnd();
+        }
+        if (data.skillAppContext) {
+          contentToSend = `[SkillApp State]\n${data.skillAppContext}\n\n[User Request]\n${contentToSend}`;
         }
 
         // 首条消息时注入预设规则和 skills

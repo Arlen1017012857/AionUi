@@ -61,7 +61,11 @@ vi.mock('./weixinLoginRoutes', () => ({
   registerWeixinLoginRoutes: vi.fn(),
 }));
 
-import { registerApiRoutes, resolveUploadWorkspace } from '../../src/process/webserver/routes/apiRoutes';
+import {
+  buildSkillAppCorsHeaders,
+  registerApiRoutes,
+  resolveUploadWorkspace,
+} from '../../src/process/webserver/routes/apiRoutes';
 import { getDatabase } from '@process/services/database';
 import type { Express } from 'express';
 
@@ -111,6 +115,25 @@ describe('apiRoutes helper functions', () => {
 
       // This triggers code paths that use isPathInsideRoot
       expect(() => registerApiRoutes(app)).not.toThrow();
+    });
+  });
+
+  describe('buildSkillAppCorsHeaders', () => {
+    it('echoes the caller origin when provided', () => {
+      expect(buildSkillAppCorsHeaders('http://127.0.0.1:12345')).toEqual(
+        expect.objectContaining({
+          'Access-Control-Allow-Origin': 'http://127.0.0.1:12345',
+          'Access-Control-Allow-Methods': 'GET, POST, PATCH, DELETE, OPTIONS',
+        })
+      );
+    });
+
+    it('falls back to wildcard for same-origin or missing-origin requests', () => {
+      expect(buildSkillAppCorsHeaders()).toEqual(
+        expect.objectContaining({
+          'Access-Control-Allow-Origin': '*',
+        })
+      );
     });
   });
 });
